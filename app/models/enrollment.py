@@ -15,6 +15,7 @@ class Enrollment(Base):
     progress = Column(Float, default=0.0)  # Percentage completed (0.0 to 100.0)
     is_completed = Column(Boolean, default=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True) # Expiry date
     last_accessed_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships

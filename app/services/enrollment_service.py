@@ -41,10 +41,19 @@ class EnrollmentService:
             # If already enrolled, just return the existing enrollment
             return existing
 
+        # Calculate expiry based on course validity
+        expires_at = None
+        if course.validity_type == 'limited_days' and course.validity_days:
+            from datetime import timedelta
+            expires_at = datetime.utcnow() + timedelta(days=course.validity_days)
+        elif course.validity_type == 'fixed_date' and course.validity_date:
+            expires_at = course.validity_date
+
         enrollment = Enrollment(
             user_id=user_id,
             course_id=course_id,
             enrolled_at=datetime.utcnow(),
+            expires_at=expires_at,
             progress=0.0,
             is_completed=False
         )
@@ -57,6 +66,7 @@ class EnrollmentService:
     def get_user_enrollments(db: Session, user_id: int, skip: int = 0, limit: int = 100) -> List[Enrollment]:
         """
         Get enrollments for a user with calculated progress based on watch time.
+        Filters out expired enrollments.
         
         Args:
             db: Database session
@@ -69,8 +79,21 @@ class EnrollmentService:
         """
         from app.models.lesson_progress import LessonProgress
         
-        enrollments = db.query(Enrollment).filter(Enrollment.user_id == user_id)\
-            .offset(skip).limit(limit).all()
+        # Filter expired enrollments logic
+        # We can do this in DB query or python. DB query is better.
+        # But for 'fixed_date' courses that expire for everyone, the course itself might be considered expired, 
+        # but here we check enrollment expiry which we set at enrollment time (or should be dynamic for fixed date).
+        # Actually for fixed_date, if we set expires_at at enrollment, it works.
+        
+        current_time = datetime.utcnow()
+        
+        # Query: (expires_at IS NULL OR expires_at > now)
+        from sqlalchemy import or_
+        
+        enrollments = db.query(Enrollment).filter(
+            Enrollment.user_id == user_id,
+            or_(Enrollment.expires_at == None, Enrollment.expires_at > current_time)
+        ).offset(skip).limit(limit).all()
         
         # Calculate progress for each enrollment based on watch time
         for enrollment in enrollments:

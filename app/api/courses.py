@@ -71,14 +71,118 @@ def get_courses(
 @router.get("/{course_id}", response_model=CourseResponse)
 def get_course(
     course_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_optional_current_user)
 ):
     """
-    Get course details.
+    Get course details with lesson locking logic.
+    - If enrolled: All lessons unlocked.
+    - If not enrolled: Only first 3 lessons of first subject are unlocked.
     """
     course = CourseService.get_course(db, course_id)
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
+
+    # Check enrollment
+    is_enrolled = False
+    if current_user:
+        # We need to import Enrollment inside to avoid circular imports if any, 
+        # or better, do it at top level if safe. 
+        # Checking local import first or assuming imports are clean.
+        from app.models.enrollment import Enrollment
+        enrollment = db.query(Enrollment).filter(
+            Enrollment.user_id == current_user.id,
+            Enrollment.course_id == course_id
+        ).first()
+        if enrollment:
+            is_enrolled = True
+            
+    # Apply Lock Logic
+    # Default: Lock everything first
+    for lesson in course.lessons:
+        lesson.is_locked = not is_enrolled
+        if lesson.is_locked:
+            lesson.video_url = None
+            lesson.content_url = None
+
+    if not is_enrolled:
+        # Unlock logic for free tier
+        # Find first subject
+        subjects = sorted(course.subjects, key=lambda s: s.order)
+        if subjects:
+            first_subject = subjects[0]
+            # Get lessons of first subject
+            # We need to filter lessons that belong to this subject
+            # Depending on how relationships are loaded, first_subject.lessons is best
+            first_sub_lessons = sorted(first_subject.lessons, key=lambda l: l.order)
+            
+            # Unlock first 3
+            for i, lesson in enumerate(first_sub_lessons):
+                if i < 3:
+                    lesson.is_locked = False
+                    # No need to restore URL as it was not cleared for these if we handle order carefully
+                    # actually we iterated course.lessons and locked ALL first.
+                    # So we need to restore logic. 
+                    # Wait, course.lessons might NOT be the same objects if accessed via course.lessons vs subject.lessons depending on session identity map. 
+                    # But usually they are.
+                    # However, if I set keys to None on course.lessons, they should be None on subject.lessons.
+                    # So I just need to set is_locked = False. 
+                    # BUT I need to ensure the URLs are available. 
+                    # The original objects had them. 
+                    # If I set them to None in the first loop, they are gone from the definition in memory!
+                    # I cannot "restore" them unless I re-fetch or store them.
+                    
+    # REVISED LOGIC to avoid destroying data before knowing if it should be kept.
+    
+    # 1. Determine which IDs are unlocked.
+    unlocked_ids = set()
+    
+    # Find first subject
+    subjects = sorted(course.subjects, key=lambda s: s.order)
+    if subjects:
+        first_subject = subjects[0]
+        first_sub_lessons = sorted(first_subject.lessons, key=lambda l: l.order)
+        for i, lesson in enumerate(first_sub_lessons):
+            if i < 3:
+                unlocked_ids.add(lesson.id)
+    else:
+        # Fallback
+        sorted_lessons = sorted(course.lessons, key=lambda l: l.order)
+        for i, lesson in enumerate(sorted_lessons):
+            if i < 3:
+                unlocked_ids.add(lesson.id)
+
+    # 2. Iterate and Apply
+    # 2. Iterate and Apply
+    for lesson in course.lessons:
+        # Determine effective lock status
+        # Store original DB value if needed, but here we can check order of operations
+        # Priority:
+        # 1. Enrolled -> Unlocked
+        # 2. Preview -> Unlocked (Free for everyone)
+        # 3. Explicit Lock (DB) -> Locked (for non-enrolled, overrides "First 3")
+        # 4. First 3 -> Unlocked
+        # 5. Default -> Locked
+        
+        db_is_locked = lesson.is_locked # Value from Database
+        
+        should_be_locked = True # Default to locked
+        
+        if is_enrolled:
+            should_be_locked = False
+        elif lesson.is_preview:
+            should_be_locked = False
+        elif db_is_locked:
+            should_be_locked = True
+        elif lesson.id in unlocked_ids:
+            should_be_locked = False
+        
+        lesson.is_locked = should_be_locked
+        
+        if should_be_locked:
+             lesson.video_url = None
+             lesson.content_url = None
+                 
     return course
 
 

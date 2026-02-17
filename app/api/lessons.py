@@ -7,10 +7,68 @@ from app.models.lesson_progress import LessonProgress
 from app.models.enrollment import Enrollment
 from app.models.user import User
 from app.dependencies import get_current_user
+from app.schemas.course import LessonHistoryResponse
 from pydantic import BaseModel
 from datetime import datetime
 
 router = APIRouter(prefix="/lessons", tags=["Lessons"])
+
+
+@router.get("/user/history", response_model=list[LessonHistoryResponse])
+def get_user_history(
+    completed: bool = None,
+    limit: int = 10,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get user's watch history.
+    - list of lessons with progress details.
+    - filter by completed (optional).
+    - sort by last_watched_at desc.
+    """
+    query = db.query(Lesson, LessonProgress).join(
+        LessonProgress, Lesson.id == LessonProgress.lesson_id
+    ).filter(
+        LessonProgress.user_id == current_user.id
+    )
+
+    if completed is not None:
+        query = query.filter(LessonProgress.completed == completed)
+
+    # Sort by last watched
+    results = query.order_by(LessonProgress.last_watched_at.desc()).limit(limit).all()
+
+    history = []
+    for lesson, progress in results:
+        # Create a response object combining lesson and progress
+        # We use the LessonHistoryResponse schema which inherits from LessonResponse
+        
+        # Manually construct to ensure all fields are mapped correctly
+        item = LessonHistoryResponse(
+            # Lesson fields
+            id=lesson.id,
+            course_id=lesson.course_id,
+            subject_id=lesson.subject_id,
+            title=lesson.title,
+            description=lesson.description,
+            content_url=lesson.content_url,
+            video_url=lesson.video_url,
+            duration=lesson.duration,
+            order=lesson.order,
+            is_preview=lesson.is_preview,
+            created_at=lesson.created_at,
+            updated_at=lesson.updated_at,
+            
+            # Progress fields
+            progress_completed=progress.completed,
+            progress_watch_time=progress.watch_time,
+            progress_last_position=progress.last_position,
+            last_watched_at=progress.last_watched_at
+        )
+        history.append(item)
+
+    return history
 
 
 class UpdateProgressRequest(BaseModel):
