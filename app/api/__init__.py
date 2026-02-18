@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api import auth, users, courses, enrollments, upload, kyc, subjects, questions, lessons, tests, bookmarks
+from app.api import auth, users, courses, enrollments, upload, kyc, subjects, questions, lessons, tests, bookmarks, stream
 from app.api.admin import courses as admin_courses, lessons as admin_lessons, qbank as admin_qbank, daily_mcq as admin_daily_mcq, tests as admin_tests, users as admin_users, course_subjects as admin_course_subjects
 
 # Create main API router
@@ -17,6 +17,7 @@ api_router.include_router(questions.router, prefix="/qbank", tags=["Qbank"])
 api_router.include_router(lessons.router)
 api_router.include_router(tests.router)
 api_router.include_router(bookmarks.router)
+api_router.include_router(stream.router)
 
 # Admin routes
 api_router.include_router(admin_courses.router)
